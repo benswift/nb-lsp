@@ -89,20 +89,30 @@ Create a `.vscode/settings.json`:
 Add to `~/.config/helix/languages.toml`:
 
 ```toml
+[language-server.nb-lsp]
+command = "nb-lsp"
+
 [[language]]
 name = "markdown"
 language-servers = ["marksman", "nb-lsp"]
-
-[language-server.nb-lsp]
-command = "nb-lsp"
 ```
 
-### Using with Marksman
+This configures Helix to use both [Marksman](https://github.com/artempyanykh/marksman) (for general markdown features) and nb-lsp (for nb-specific features) on all markdown files.
 
-nb-lsp is designed to complement [Marksman](https://github.com/artempyanykh/marksman) for general Markdown LSP features. Configure both servers in your editor:
+Since nb stores notes as plain markdown files (typically in `~/.nb/`), the LSP will work automatically when you open any note with `nb edit` or directly in Helix. The nb-lsp features (wiki-link completion, tag completion, go-to-definition) activate when you're editing files within an nb notebook directory.
 
-- **Marksman**: General Markdown linting, standard link completion, document symbols
-- **nb-lsp**: nb-specific wiki links, tag completion, cross-notebook references
+If you only want nb-lsp for files in your nb directory, you can create a `.helix/languages.toml` in your nb home folder (`~/.nb/` by default, or `$NB_DIR` if set):
+
+```toml
+[language-server.nb-lsp]
+command = "nb-lsp"
+
+[[language]]
+name = "markdown"
+language-servers = ["nb-lsp", "marksman"]
+```
+
+This gives nb-lsp priority for completion results in your notebooks while keeping your global markdown config unchanged.
 
 ## Development
 
