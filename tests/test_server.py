@@ -268,11 +268,6 @@ class TestTagCompletions:
 class TestDiagnostics:
     """Tests for diagnostic generation."""
 
-    # Note: Full diagnostic tests would require more complex mocking
-    # of the server's workspace and document handling. These are
-    # integration-level tests that are better tested with a real
-    # LSP client or end-to-end test setup.
-
     def test_broken_link_detection_logic(self):
         """Test the logic for detecting broken links."""
         from nb_lsp.selectors import parse_wiki_links
@@ -282,7 +277,75 @@ class TestDiagnostics:
 
         assert len(links) == 2
 
-        # In real diagnostics, we'd check each link against nb
-        # This test just verifies we can identify links to check
         assert links[0].selector == "Valid Note"
         assert links[1].selector == "Broken Link"
+
+
+class TestShutdown:
+    """Tests for shutdown handling."""
+
+    @pytest.fixture
+    def server(self):
+        """Create a server instance with mocked nb client."""
+        srv = NbLanguageServer("test", "v0.0.0")
+        srv.nb = MagicMock()
+        return srv
+
+    def test_shutdown_calls_nb_shutdown(self):
+        """Test that shutdown handler calls nb.shutdown()."""
+        from nb_lsp.server import server, shutdown
+
+        server.nb = MagicMock()
+        server._shutting_down = False
+
+        shutdown(None)
+
+        server.nb.shutdown.assert_called_once()
+
+    def test_shutdown_sets_flag(self):
+        """Test that shutdown sets _shutting_down flag."""
+        from nb_lsp.server import server, shutdown
+
+        server._shutting_down = False
+        server.nb = MagicMock()
+
+        shutdown(None)
+
+        assert server._shutting_down is True
+
+    def test_completions_returns_none_when_shutting_down(self):
+        """Test that completions returns early when shutting down."""
+        from nb_lsp.server import completions, server
+
+        server._shutting_down = True
+        server.nb = MagicMock()
+
+        params = MagicMock()
+        result = completions(params)
+
+        assert result is None
+        server.nb.get_notebooks.assert_not_called()
+
+    def test_definition_returns_none_when_shutting_down(self):
+        """Test that definition returns early when shutting down."""
+        from nb_lsp.server import definition, server
+
+        server._shutting_down = True
+        server.nb = MagicMock()
+
+        params = MagicMock()
+        result = definition(params)
+
+        assert result is None
+
+    def test_diagnostics_returns_empty_when_shutting_down(self):
+        """Test that diagnostics returns empty report when shutting down."""
+        from nb_lsp.server import diagnostics, server
+
+        server._shutting_down = True
+        server.nb = MagicMock()
+
+        params = MagicMock()
+        result = diagnostics(params)
+
+        assert result.items == []

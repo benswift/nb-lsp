@@ -31,6 +31,7 @@ class NbLanguageServer(LanguageServer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.nb = NbClient()
+        self._shutting_down = False
 
     def get_notebook_for_uri(self, uri: str) -> str | None:
         """Get the notebook name for a document URI."""
@@ -115,8 +116,11 @@ def initialize(params: lsp.InitializeParams) -> lsp.InitializeResult:
 
 
 @server.feature(lsp.TEXT_DOCUMENT_COMPLETION)
+@server.thread()
 def completions(params: lsp.CompletionParams) -> lsp.CompletionList | None:
     """Provide completions for wiki-style links and tags."""
+    if server._shutting_down:
+        return None
     document = server.workspace.get_text_document(params.text_document.uri)
     offset = position_to_offset(document, params.position)
     text = document.source
@@ -229,7 +233,9 @@ def get_link_completions(
     return items
 
 
-def get_tag_completions(server: NbLanguageServer, partial: str) -> list[lsp.CompletionItem]:
+def get_tag_completions(
+    server: NbLanguageServer, partial: str
+) -> list[lsp.CompletionItem]:
     """Get completion items for tags."""
     items = []
     tags = server.nb.get_tags()
@@ -252,8 +258,11 @@ def get_tag_completions(server: NbLanguageServer, partial: str) -> list[lsp.Comp
 
 
 @server.feature(lsp.TEXT_DOCUMENT_DEFINITION)
+@server.thread()
 def definition(params: lsp.DefinitionParams) -> lsp.Location | None:
     """Go to definition for wiki-style links."""
+    if server._shutting_down:
+        return None
     document = server.workspace.get_text_document(params.text_document.uri)
     offset = position_to_offset(document, params.position)
 
@@ -285,8 +294,14 @@ def definition(params: lsp.DefinitionParams) -> lsp.Location | None:
 
 
 @server.feature(lsp.TEXT_DOCUMENT_DIAGNOSTIC)
+@server.thread()
 def diagnostics(params: lsp.DocumentDiagnosticParams) -> lsp.DocumentDiagnosticReport:
     """Provide diagnostics for broken wiki links."""
+    if server._shutting_down:
+        return lsp.RelatedFullDocumentDiagnosticReport(
+            kind=lsp.DocumentDiagnosticReportKind.Full,
+            items=[],
+        )
     document = server.workspace.get_text_document(params.text_document.uri)
     current_notebook = server.get_notebook_for_uri(params.text_document.uri)
 
@@ -329,6 +344,14 @@ def did_save(params: lsp.DidSaveTextDocumentParams):
     notebook = server.get_notebook_for_uri(params.text_document.uri)
     if notebook:
         server.nb.invalidate_cache(notebook)
+
+
+@server.feature(lsp.SHUTDOWN)
+def shutdown(params: None) -> None:
+    """Handle shutdown request - terminate any running subprocesses."""
+    logger.info("Shutting down nb-lsp")
+    server._shutting_down = True
+    server.nb.shutdown()
 
 
 def main():

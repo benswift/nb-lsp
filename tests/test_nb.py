@@ -18,80 +18,73 @@ class TestNbClient:
         return NbClient()
 
     @pytest.fixture
-    def mock_run(self):
-        """Create a mock for subprocess.run."""
-        with patch("subprocess.run") as mock:
+    def mock_popen(self):
+        """Create a mock for subprocess.Popen."""
+        with patch("subprocess.Popen") as mock:
             yield mock
 
-    def test_run_success(self, client, mock_run):
+    def _make_mock_proc(self, stdout: str, stderr: str = "", returncode: int = 0):
+        """Create a mock Popen instance."""
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = (stdout, stderr)
+        mock_proc.returncode = returncode
+        return mock_proc
+
+    def test_run_success(self, client):
         """Test successful command execution."""
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=["nb", "test"],
-            returncode=0,
-            stdout="output",
-            stderr="",
-        )
+        with patch("subprocess.Popen") as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.communicate.return_value = ("output", "")
+            mock_proc.returncode = 0
+            mock_popen.return_value = mock_proc
 
-        result = client._run("test")
+            result = client._run("test")
 
-        assert result.stdout == "output"
-        mock_run.assert_called_once()
+            assert result.stdout == "output"
+            mock_popen.assert_called_once()
 
-    def test_run_failure(self, client, mock_run):
+    def test_run_failure(self, client):
         """Test command failure raises NbError."""
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=["nb", "test"],
-            returncode=1,
-            stdout="",
-            stderr="error message",
-        )
+        with patch("subprocess.Popen") as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.communicate.return_value = ("", "error message")
+            mock_proc.returncode = 1
+            mock_popen.return_value = mock_proc
 
-        with pytest.raises(NbError, match="error message"):
-            client._run("test")
+            with pytest.raises(NbError, match="error message"):
+                client._run("test")
 
-    def test_run_timeout(self, client, mock_run):
+    def test_run_timeout(self, client):
         """Test command timeout raises NbError."""
-        mock_run.side_effect = subprocess.TimeoutExpired(cmd="nb", timeout=30)
+        client.timeout = 0.001
+        with patch("subprocess.Popen") as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.communicate.side_effect = [
+                subprocess.TimeoutExpired(cmd="nb", timeout=0.001),
+                ("", ""),
+            ]
+            mock_popen.return_value = mock_proc
 
-        with pytest.raises(NbError, match="timed out"):
-            client._run("test")
+            with pytest.raises(NbError, match="timed out"):
+                client._run("test")
 
-    def test_run_not_found(self, client, mock_run):
+            mock_proc.kill.assert_called_once()
+
+    def test_run_not_found(self, client):
         """Test command not found raises NbError."""
-        mock_run.side_effect = FileNotFoundError()
+        with patch("subprocess.Popen") as mock_popen:
+            mock_popen.side_effect = FileNotFoundError()
 
-        with pytest.raises(NbError, match="not found"):
-            client._run("test")
+            with pytest.raises(NbError, match="not found"):
+                client._run("test")
 
-    def test_get_notebooks(self, client, mock_run):
+    def test_get_notebooks(self, client, mock_popen):
         """Test getting list of notebooks."""
-        # First call: list notebooks
-        # Second+ calls: get paths for each notebook
-        mock_run.side_effect = [
-            subprocess.CompletedProcess(
-                args=["nb", "notebooks", "--names", "--no-archived"],
-                returncode=0,
-                stdout="home\nwork\npersonal\n",
-                stderr="",
-            ),
-            subprocess.CompletedProcess(
-                args=["nb", "notebooks", "show", "home", "--path"],
-                returncode=0,
-                stdout="/home/user/.nb/home\n",
-                stderr="",
-            ),
-            subprocess.CompletedProcess(
-                args=["nb", "notebooks", "show", "work", "--path"],
-                returncode=0,
-                stdout="/home/user/.nb/work\n",
-                stderr="",
-            ),
-            subprocess.CompletedProcess(
-                args=["nb", "notebooks", "show", "personal", "--path"],
-                returncode=0,
-                stdout="/home/user/.nb/personal\n",
-                stderr="",
-            ),
+        mock_popen.side_effect = [
+            self._make_mock_proc("home\nwork\npersonal\n"),
+            self._make_mock_proc("/home/user/.nb/home\n"),
+            self._make_mock_proc("/home/user/.nb/work\n"),
+            self._make_mock_proc("/home/user/.nb/personal\n"),
         ]
 
         notebooks = client.get_notebooks(use_cache=False)
@@ -102,31 +95,18 @@ class TestNbClient:
         assert notebooks[1].name == "work"
         assert notebooks[2].name == "personal"
 
-    def test_get_notebooks_caching(self, client, mock_run):
+    def test_get_notebooks_caching(self, client, mock_popen):
         """Test that notebooks are cached."""
-        mock_run.side_effect = [
-            subprocess.CompletedProcess(
-                args=["nb", "notebooks", "--names", "--no-archived"],
-                returncode=0,
-                stdout="home\n",
-                stderr="",
-            ),
-            subprocess.CompletedProcess(
-                args=["nb", "notebooks", "show", "home", "--path"],
-                returncode=0,
-                stdout="/home/user/.nb/home\n",
-                stderr="",
-            ),
+        mock_popen.side_effect = [
+            self._make_mock_proc("home\n"),
+            self._make_mock_proc("/home/user/.nb/home\n"),
         ]
 
-        # First call
         notebooks1 = client.get_notebooks()
-        # Second call should use cache
         notebooks2 = client.get_notebooks()
 
         assert notebooks1 == notebooks2
-        # Should only have called subprocess twice (once for list, once for path)
-        assert mock_run.call_count == 2
+        assert mock_popen.call_count == 2
 
     def test_parse_list_line_with_title(self, client):
         """Test parsing a list line with title."""
@@ -174,56 +154,35 @@ class TestNbClient:
 
         assert note is None
 
-    def test_resolve_selector_success(self, client, mock_run):
+    def test_resolve_selector_success(self, client, mock_popen):
         """Test resolving a selector to a path."""
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=["nb", "show", "home:My Note", "--path"],
-            returncode=0,
-            stdout="/home/user/.nb/home/my_note.md\n",
-            stderr="",
-        )
+        mock_popen.return_value = self._make_mock_proc("/home/user/.nb/home/my_note.md\n")
 
         path = client.resolve_selector("My Note", current_notebook="home")
 
         assert path == Path("/home/user/.nb/home/my_note.md")
 
-    def test_resolve_selector_not_found(self, client, mock_run):
+    def test_resolve_selector_not_found(self, client, mock_popen):
         """Test resolving a non-existent selector."""
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=["nb", "show", "home:Nonexistent", "--path"],
-            returncode=1,
-            stdout="",
-            stderr="Not found",
-        )
+        mock_popen.return_value = self._make_mock_proc("", "Not found", 1)
 
         path = client.resolve_selector("Nonexistent", current_notebook="home")
 
         assert path is None
 
-    def test_resolve_selector_with_notebook_prefix(self, client, mock_run):
+    def test_resolve_selector_with_notebook_prefix(self, client, mock_popen):
         """Test resolving a selector that already has notebook prefix."""
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=["nb", "show", "work:123", "--path"],
-            returncode=0,
-            stdout="/home/user/.nb/work/note.md\n",
-            stderr="",
-        )
+        mock_popen.return_value = self._make_mock_proc("/home/user/.nb/work/note.md\n")
 
         path = client.resolve_selector("work:123", current_notebook="home")
 
         assert path == Path("/home/user/.nb/work/note.md")
-        # Should use the provided prefix, not current_notebook
-        args_used = mock_run.call_args[0][0]
+        args_used = mock_popen.call_args[0][0]
         assert "work:123" in args_used
 
-    def test_get_tags(self, client, mock_run):
+    def test_get_tags(self, client, mock_popen):
         """Test getting tags."""
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=["nb", "tags", "--list"],
-            returncode=0,
-            stdout="#tag1\n#tag2\n#project/design\n",
-            stderr="",
-        )
+        mock_popen.return_value = self._make_mock_proc("#tag1\n#tag2\n#project/design\n")
 
         tags = client.get_tags()
 
@@ -232,18 +191,39 @@ class TestNbClient:
         assert "tag2" in tags
         assert "project/design" in tags
 
-    def test_get_tags_empty(self, client, mock_run):
+    def test_get_tags_empty(self, client, mock_popen):
         """Test getting tags when none exist."""
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=["nb", "tags", "--list"],
-            returncode=0,
-            stdout="",
-            stderr="",
-        )
+        mock_popen.return_value = self._make_mock_proc("")
 
         tags = client.get_tags()
 
         assert tags == []
+
+    def test_shutdown_terminates_running_process(self, client):
+        """Test that shutdown terminates any running subprocess."""
+        mock_proc = MagicMock()
+        client._current_process = mock_proc
+
+        client.shutdown()
+
+        mock_proc.terminate.assert_called_once()
+        mock_proc.wait.assert_called_once_with(timeout=1)
+
+    def test_shutdown_kills_on_timeout(self, client):
+        """Test that shutdown kills process if terminate times out."""
+        mock_proc = MagicMock()
+        mock_proc.wait.side_effect = subprocess.TimeoutExpired(cmd="nb", timeout=1)
+        client._current_process = mock_proc
+
+        client.shutdown()
+
+        mock_proc.terminate.assert_called_once()
+        mock_proc.kill.assert_called_once()
+
+    def test_shutdown_no_process(self, client):
+        """Test that shutdown does nothing when no process is running."""
+        client._current_process = None
+        client.shutdown()
 
     def test_get_current_notebook(self, client):
         """Test determining notebook from file path."""

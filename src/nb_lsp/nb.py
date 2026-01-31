@@ -43,10 +43,12 @@ class NbError(Exception):
 class NbClient:
     """Client for interacting with nb CLI."""
 
-    def __init__(self, nb_path: str = "nb"):
+    def __init__(self, nb_path: str = "nb", timeout: int = 5):
         self.nb_path = nb_path
+        self.timeout = timeout
         self._notebooks_cache: list[Notebook] | None = None
         self._notes_cache: dict[str, list[Note]] = {}
+        self._current_process: subprocess.Popen | None = None
 
     def _run(self, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
         """Run an nb command and return the result."""
@@ -54,19 +56,44 @@ class NbClient:
         logger.debug(f"Running: {' '.join(cmd)}")
 
         try:
-            result = subprocess.run(
+            proc = subprocess.Popen(
                 cmd,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=30,
+            )
+            self._current_process = proc
+            try:
+                stdout, stderr = proc.communicate(timeout=self.timeout)
+            finally:
+                self._current_process = None
+
+            result = subprocess.CompletedProcess(
+                args=cmd,
+                returncode=proc.returncode,
+                stdout=stdout,
+                stderr=stderr,
             )
             if check and result.returncode != 0:
                 raise NbError(f"nb command failed: {result.stderr}")
             return result
         except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()
             raise NbError("nb command timed out")
         except FileNotFoundError:
             raise NbError(f"nb not found at {self.nb_path}")
+
+    def shutdown(self):
+        """Terminate any running subprocess for clean shutdown."""
+        proc = self._current_process
+        if proc is not None:
+            logger.info("Terminating running nb subprocess for shutdown")
+            proc.terminate()
+            try:
+                proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                proc.kill()
 
     def get_notebooks(self, use_cache: bool = True) -> list[Notebook]:
         """Get all notebooks."""
