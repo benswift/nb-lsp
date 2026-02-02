@@ -1,7 +1,7 @@
 """Tests for the LSP server module."""
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from lsprotocol import types as lsp
@@ -66,15 +66,15 @@ class TestPositionOffset:
         offset = position_to_offset(mock_document, pos)
 
         assert offset == 5
-        assert mock_document.source[offset] == "o"  # "Line one"[5] = 'o'
+        assert mock_document.source[offset] == "o"
 
     def test_position_to_offset_second_line(self, mock_document):
         """Test converting position on second line."""
         pos = lsp.Position(line=1, character=0)
         offset = position_to_offset(mock_document, pos)
 
-        assert offset == 9  # "Line one\n" = 9 chars
-        assert mock_document.source[offset] == "L"  # Start of "Line two"
+        assert offset == 9
+        assert mock_document.source[offset] == "L"
 
     def test_position_to_offset_middle(self, mock_document):
         """Test converting position in middle of document."""
@@ -82,7 +82,7 @@ class TestPositionOffset:
         offset = position_to_offset(mock_document, pos)
 
         assert offset == 14
-        assert mock_document.source[offset] == "t"  # "Line two"[5] = 't'
+        assert mock_document.source[offset] == "t"
 
     def test_offset_to_position_first_line(self, mock_document):
         """Test converting offset on first line."""
@@ -107,28 +107,47 @@ class TestNbLanguageServer:
         """Create a server instance with mocked nb client."""
         srv = NbLanguageServer("test", "v0.0.0")
         srv.nb = MagicMock()
+        srv.nb.get_current_notebook = AsyncMock()
+        srv.nb.get_notebooks = AsyncMock()
+        srv.nb.get_notes = AsyncMock()
         return srv
 
-    def test_get_notebook_for_uri(self, server):
+    async def test_get_notebook_for_uri(self, server):
         """Test getting notebook for a URI."""
         server.nb.get_current_notebook.return_value = "home"
 
-        result = server.get_notebook_for_uri("file:///home/user/.nb/home/note.md")
+        result = await server.get_notebook_for_uri("file:///home/user/.nb/home/note.md")
 
         assert result == "home"
 
-    def test_get_all_notes(self, server):
+    async def test_get_all_notes(self, server):
         """Test getting all notes from all notebooks."""
         server.nb.get_notebooks.return_value = [
             Notebook(name="home", path=Path("/tmp/home")),
             Notebook(name="work", path=Path("/tmp/work")),
         ]
         server.nb.get_notes.side_effect = [
-            [Note(id="1", filename="a.md", path=Path("/tmp/a.md"), title="Note A", notebook="home")],
-            [Note(id="2", filename="b.md", path=Path("/tmp/b.md"), title="Note B", notebook="work")],
+            [
+                Note(
+                    id="1",
+                    filename="a.md",
+                    path=Path("/tmp/a.md"),
+                    title="Note A",
+                    notebook="home",
+                )
+            ],
+            [
+                Note(
+                    id="2",
+                    filename="b.md",
+                    path=Path("/tmp/b.md"),
+                    title="Note B",
+                    notebook="work",
+                )
+            ],
         ]
 
-        notes = server.get_all_notes()
+        notes = await server.get_all_notes()
 
         assert len(notes) == 2
         assert notes[0].title == "Note A"
@@ -143,81 +162,108 @@ class TestLinkCompletions:
         """Create a server instance with mocked nb client."""
         srv = NbLanguageServer("test", "v0.0.0")
         srv.nb = MagicMock()
-        srv.nb.get_notebooks.return_value = [
-            Notebook(name="home", path=Path("/tmp/home")),
-            Notebook(name="work", path=Path("/tmp/work")),
-        ]
+        srv.nb.get_notebooks = AsyncMock(
+            return_value=[
+                Notebook(name="home", path=Path("/tmp/home")),
+                Notebook(name="work", path=Path("/tmp/work")),
+            ]
+        )
+        srv.nb.get_notes = AsyncMock()
+        srv.get_notebook_for_uri = AsyncMock(return_value="home")
+        srv.get_all_notes = AsyncMock()
         return srv
 
-    def test_empty_partial_returns_all(self, server):
+    async def test_empty_partial_returns_all(self, server):
         """Test that empty partial returns all notes."""
-        server.nb.get_notes.side_effect = [
-            [Note(id="1", filename="a.md", path=Path("/tmp/a.md"), title="Alpha", notebook="home")],
-            [Note(id="2", filename="b.md", path=Path("/tmp/b.md"), title="Beta", notebook="work")],
+        server.get_all_notes.return_value = [
+            Note(
+                id="1",
+                filename="a.md",
+                path=Path("/tmp/a.md"),
+                title="Alpha",
+                notebook="home",
+            ),
+            Note(
+                id="2",
+                filename="b.md",
+                path=Path("/tmp/b.md"),
+                title="Beta",
+                notebook="work",
+            ),
         ]
-        server.get_notebook_for_uri = MagicMock(return_value="home")
 
-        items = get_link_completions(server, "file:///tmp/home/test.md", "")
+        items = await get_link_completions(server, "file:///tmp/home/test.md", "")
 
-        # Should include notes from both notebooks
         labels = [item.label for item in items]
         assert "Alpha" in labels
         assert "Beta" in labels
 
-    def test_partial_filters_by_title(self, server):
+    async def test_partial_filters_by_title(self, server):
         """Test that partial text filters by title."""
-        server.nb.get_notes.side_effect = [
-            [
-                Note(id="1", filename="a.md", path=Path("/tmp/a.md"), title="Alpha Note", notebook="home"),
-                Note(id="2", filename="b.md", path=Path("/tmp/b.md"), title="Beta Note", notebook="home"),
-            ],
-            [],
+        server.get_all_notes.return_value = [
+            Note(
+                id="1",
+                filename="a.md",
+                path=Path("/tmp/a.md"),
+                title="Alpha Note",
+                notebook="home",
+            ),
+            Note(
+                id="2",
+                filename="b.md",
+                path=Path("/tmp/b.md"),
+                title="Beta Note",
+                notebook="home",
+            ),
         ]
-        server.get_notebook_for_uri = MagicMock(return_value="home")
 
-        items = get_link_completions(server, "file:///tmp/home/test.md", "Alp")
+        items = await get_link_completions(server, "file:///tmp/home/test.md", "Alp")
 
         labels = [item.label for item in items]
         assert "Alpha Note" in labels
         assert "Beta Note" not in labels
 
-    def test_notebook_prefix_completion(self, server):
+    async def test_notebook_prefix_completion(self, server):
         """Test notebook name completion."""
-        server.nb.get_notes.return_value = []
-        server.get_notebook_for_uri = MagicMock(return_value="home")
+        server.get_all_notes.return_value = []
 
-        items = get_link_completions(server, "file:///tmp/home/test.md", "wo")
+        items = await get_link_completions(server, "file:///tmp/home/test.md", "wo")
 
-        # Should suggest "work:" as a completion
         labels = [item.label for item in items]
         assert "work:" in labels
 
-    def test_cross_notebook_prefix(self, server):
+    async def test_cross_notebook_prefix(self, server):
         """Test completion adds notebook prefix for other notebooks."""
-        server.nb.get_notes.side_effect = [
-            [],
-            [Note(id="1", filename="a.md", path=Path("/tmp/a.md"), title="Work Note", notebook="work")],
+        server.get_all_notes.return_value = [
+            Note(
+                id="1",
+                filename="a.md",
+                path=Path("/tmp/a.md"),
+                title="Work Note",
+                notebook="work",
+            ),
         ]
-        server.get_notebook_for_uri = MagicMock(return_value="home")
 
-        items = get_link_completions(server, "file:///tmp/home/test.md", "")
+        items = await get_link_completions(server, "file:///tmp/home/test.md", "")
 
-        # Note from work notebook should have prefix in insert_text
         work_items = [item for item in items if item.label == "Work Note"]
         assert len(work_items) == 1
         assert work_items[0].insert_text == "work:Work Note"
 
-    def test_same_notebook_no_prefix(self, server):
+    async def test_same_notebook_no_prefix(self, server):
         """Test completion doesn't add prefix for same notebook."""
-        server.nb.get_notes.side_effect = [
-            [Note(id="1", filename="a.md", path=Path("/tmp/a.md"), title="Home Note", notebook="home")],
-            [],
+        server.get_all_notes.return_value = [
+            Note(
+                id="1",
+                filename="a.md",
+                path=Path("/tmp/a.md"),
+                title="Home Note",
+                notebook="home",
+            ),
         ]
-        server.get_notebook_for_uri = MagicMock(return_value="home")
 
-        items = get_link_completions(server, "file:///tmp/home/test.md", "")
+        items = await get_link_completions(server, "file:///tmp/home/test.md", "")
 
-        # Note from home notebook should not have prefix
         home_items = [item for item in items if item.label == "Home Note"]
         assert len(home_items) == 1
         assert home_items[0].insert_text == "Home Note"
@@ -231,35 +277,36 @@ class TestTagCompletions:
         """Create a server instance with mocked nb client."""
         srv = NbLanguageServer("test", "v0.0.0")
         srv.nb = MagicMock()
+        srv.nb.get_tags = AsyncMock()
         return srv
 
-    def test_returns_all_tags(self, server):
+    async def test_returns_all_tags(self, server):
         """Test that all tags are returned when partial is empty."""
         server.nb.get_tags.return_value = ["tag1", "tag2", "project/design"]
 
-        items = get_tag_completions(server, "")
+        items = await get_tag_completions(server, "")
 
         labels = [item.label for item in items]
         assert "#tag1" in labels
         assert "#tag2" in labels
         assert "#project/design" in labels
 
-    def test_filters_by_partial(self, server):
+    async def test_filters_by_partial(self, server):
         """Test that partial text filters tags."""
         server.nb.get_tags.return_value = ["alpha", "beta", "alphabet"]
 
-        items = get_tag_completions(server, "alp")
+        items = await get_tag_completions(server, "alp")
 
         labels = [item.label for item in items]
         assert "#alpha" in labels
         assert "#alphabet" in labels
         assert "#beta" not in labels
 
-    def test_insert_text_excludes_hash(self, server):
+    async def test_insert_text_excludes_hash(self, server):
         """Test that insert_text doesn't include #."""
         server.nb.get_tags.return_value = ["mytag"]
 
-        items = get_tag_completions(server, "")
+        items = await get_tag_completions(server, "")
 
         assert items[0].label == "#mytag"
         assert items[0].insert_text == "mytag"
@@ -276,20 +323,12 @@ class TestDiagnostics:
         links = parse_wiki_links(text)
 
         assert len(links) == 2
-
         assert links[0].selector == "Valid Note"
         assert links[1].selector == "Broken Link"
 
 
 class TestShutdown:
     """Tests for shutdown handling."""
-
-    @pytest.fixture
-    def server(self):
-        """Create a server instance with mocked nb client."""
-        srv = NbLanguageServer("test", "v0.0.0")
-        srv.nb = MagicMock()
-        return srv
 
     def test_shutdown_calls_nb_shutdown(self):
         """Test that shutdown handler calls nb.shutdown()."""
@@ -313,20 +352,21 @@ class TestShutdown:
 
         assert server._shutting_down is True
 
-    def test_completions_returns_none_when_shutting_down(self):
+    async def test_completions_returns_none_when_shutting_down(self):
         """Test that completions returns early when shutting down."""
         from nb_lsp.server import completions, server
 
         server._shutting_down = True
         server.nb = MagicMock()
+        server.nb.get_notebooks = AsyncMock()
 
         params = MagicMock()
-        result = completions(params)
+        result = await completions(params)
 
         assert result is None
         server.nb.get_notebooks.assert_not_called()
 
-    def test_definition_returns_none_when_shutting_down(self):
+    async def test_definition_returns_none_when_shutting_down(self):
         """Test that definition returns early when shutting down."""
         from nb_lsp.server import definition, server
 
@@ -334,11 +374,11 @@ class TestShutdown:
         server.nb = MagicMock()
 
         params = MagicMock()
-        result = definition(params)
+        result = await definition(params)
 
         assert result is None
 
-    def test_diagnostics_returns_empty_when_shutting_down(self):
+    async def test_diagnostics_returns_empty_when_shutting_down(self):
         """Test that diagnostics returns empty report when shutting down."""
         from nb_lsp.server import diagnostics, server
 
@@ -346,6 +386,6 @@ class TestShutdown:
         server.nb = MagicMock()
 
         params = MagicMock()
-        result = diagnostics(params)
+        result = await diagnostics(params)
 
         assert result.items == []

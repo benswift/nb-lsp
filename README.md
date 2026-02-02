@@ -1,16 +1,19 @@
 # nb-lsp
 
-An LSP server for [nb](https://xwmx.github.io/nb/), the command-line note-taking, bookmarking, and knowledge base application.
+An LSP server for [nb](https://xwmx.github.io/nb/), the command-line
+note-taking, bookmarking, and knowledge base application.
 
 ## Features
 
 ### Wiki-style Links `[[...]]`
 
-- **Completion**: Trigger with `[[` to complete note titles, IDs, filenames, and notebook references
+- **Completion**: Trigger with `[[` to complete note titles, IDs, filenames, and
+  notebook references
 - **Go to Definition**: Jump to linked notes
 - **Diagnostics**: Detect broken links
 
 Supported link formats (all valid nb selectors):
+
 - `[[My Note Title]]` — by title (preferred)
 - `[[123]]` — by ID
 - `[[filename.md]]` — by filename
@@ -97,11 +100,19 @@ name = "markdown"
 language-servers = ["marksman", "nb-lsp"]
 ```
 
-This configures Helix to use both [Marksman](https://github.com/artempyanykh/marksman) (for general markdown features) and nb-lsp (for nb-specific features) on all markdown files.
+This configures Helix to use both
+[Marksman](https://github.com/artempyanykh/marksman) (for general markdown
+features) and nb-lsp (for nb-specific features) on all markdown files.
 
-Since nb stores notes as plain markdown files (typically in `~/.nb/`), the LSP will work automatically when you open any note with `nb edit` or directly in Helix. The nb-lsp features (wiki-link completion, tag completion, go-to-definition) activate when you're editing files within an nb notebook directory.
+Since nb stores notes as plain markdown files (typically in `~/.nb/`), the LSP
+will work automatically when you open any note with `nb edit` or directly in
+Helix. The nb-lsp features (wiki-link completion, tag completion,
+go-to-definition) activate when you're editing files within an nb notebook
+directory.
 
-If you only want nb-lsp for files in your nb directory, you can create a `.helix/languages.toml` in your nb home folder (`~/.nb/` by default, or `$NB_DIR` if set):
+If you only want nb-lsp for files in your nb directory, you can create a
+`.helix/languages.toml` in your nb home folder (`~/.nb/` by default, or
+`$NB_DIR` if set):
 
 ```toml
 [language-server.nb-lsp]
@@ -112,7 +123,8 @@ name = "markdown"
 language-servers = ["nb-lsp", "marksman"]
 ```
 
-This gives nb-lsp priority for completion results in your notebooks while keeping your global markdown config unchanged.
+This gives nb-lsp priority for completion results in your notebooks while
+keeping your global markdown config unchanged.
 
 ## Development
 
