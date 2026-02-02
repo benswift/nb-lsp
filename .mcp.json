@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ht-mcp": {
+      "command": "ht-mcp",
+      "args": []
+    }
+  }
+}
