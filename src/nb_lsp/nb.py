@@ -92,7 +92,7 @@ class NbClient:
         if use_cache and self._notebooks_cache is not None:
             return self._notebooks_cache
 
-        result = await self._run("notebooks", "--names", "--no-archived")
+        result = await self._run("notebooks", "--names", "--unarchived")
         notebooks = []
 
         for line in result.stdout.strip().split("\n"):
